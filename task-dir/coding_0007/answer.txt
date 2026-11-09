@@ -1,0 +1,6 @@
+def solve(lst):
+    result = []
+    for x in lst:
+        if x > 0 and x < 100:
+            result.append(x)
+    return result

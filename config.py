@@ -9,8 +9,8 @@ import yaml
 @dataclass
 class Config:
     # курс и бюджет
-    input_to_output_ratio: float = 9.5
-    budget_output_equiv: int = 80_000
+    input_to_output_ratio: float = 10
+    budget_output_equiv: int = 100_000
 
     # агентный фреймворк
     c_sys_in: int = 1000

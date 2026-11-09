@@ -1,0 +1,5 @@
+def coding_0003(numbers):
+    """
+    Given a list of integers, return the sum of the integers.
+    """
+    return sum(numbers)

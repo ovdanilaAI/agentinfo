@@ -1,5 +1,5 @@
-input_to_output_ratio: 9.5
-budget_output_equiv: 80000
+input_to_output_ratio: 10
+budget_output_equiv: 100000
 
 c_sys_in: 1000
 c_sys_out: 50
@@ -30,4 +30,4 @@ p_solved_unlikely: 0.05
 # фичи
 files_per_grep: 20
 max_claims_checked: 20
-output_csv: true                      # на проде выключишь
+output_csv: false                      # на проде выключишь
