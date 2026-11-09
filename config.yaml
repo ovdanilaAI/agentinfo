@@ -1,0 +1,33 @@
+input_to_output_ratio: 9.5
+budget_output_equiv: 80000
+
+c_sys_in: 1000
+c_sys_out: 50
+avg_tool_call_tokens: 60
+reasoning_tokens_per_step: 350        # ← по твоей оценке
+avg_tool_output_tokens_cap: 2000
+
+latency_per_step_sec: 3.0
+latency_reasoning_bonus_sec: 2.0
+fixed_overhead_sec: 5.0
+
+safety_margin_output: 1.3
+safety_margin_seconds: 1.5
+
+# рюкзак
+knapsack_algorithm: dp_exact
+knapsack_budget_scale: 1              # делитель для ДП (1 = точный)
+
+# планировщик
+n_agents: 5
+time_budget_sec: 3600
+
+# p_solved_prior
+p_solved_likely: 0.85
+p_solved_uncertain: 0.75
+p_solved_unlikely: 0.05
+
+# фичи
+files_per_grep: 20
+max_claims_checked: 20
+output_csv: true                      # на проде выключишь
