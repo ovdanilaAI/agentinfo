@@ -2,7 +2,7 @@ input_to_output_ratio: 10
 budget_output_equiv: 100000
 
 c_sys_in: 1000
-c_sys_out: 50
+c_sys_out: 100
 avg_tool_call_tokens: 60
 reasoning_tokens_per_step: 350        # ← по твоей оценке
 avg_tool_output_tokens_cap: 2000
@@ -23,8 +23,8 @@ n_agents: 5
 time_budget_sec: 3600
 
 # p_solved_prior
-p_solved_likely: 0.85
-p_solved_uncertain: 0.75
+p_solved_likely: 0.90
+p_solved_uncertain: 0.85
 p_solved_unlikely: 0.05
 
 # фичи
