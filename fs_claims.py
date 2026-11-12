@@ -1,10 +1,12 @@
 """
-Детектор невыполнимых задач: проверяем утверждения из instruction
+Детектор невыполнимых задач. Проверяем утверждения из instruction
 против реальной файловой системы ВНУТРИ workspace.
 
-Защита от ложных срабатываний:
-  - выходные файлы (answer.txt и т.п.) не проверяются на существование
-  - при checked==0 и отсутствии workspace ставим likely (нечего проверять)
+МЯГКАЯ ВЕРСИЯ:
+  - выходные файлы (answer.txt) не проверяются
+  - нет workspace + 1-2 упомянутых файла → uncertain (не unlikely)
+  - отсутствие неключевой директории → мягкое (uncertain), не hard
+  - hard violations оставляют unlikely, но p_solved для unlikely = 0.15 (не 0.05)
 """
 import csv
 import re
@@ -90,8 +92,9 @@ def verify_claims(workspace: str | Path, instruction: str,
     checked = 0
     hard_violated = 0
 
-    # нет workspace, но упомянуты входные файлы — скорее ловушка
-    if not has_workspace and claims["files"]:
+    # нет workspace, но упомянуты > 2 входных файлов — скорее ловушка.
+    # 1-2 файла — может быть, файл лежит в другом месте или это описание, не приговор.
+    if not has_workspace and len(claims["files"]) > 2:
         return {
             "feasibility": "unlikely",
             "violations": [f"no_workspace_but_files_mentioned:{','.join(claims['files'])}"],
@@ -106,7 +109,7 @@ def verify_claims(workspace: str | Path, instruction: str,
             violations.append(f"file_missing:{name}")
             hard_violated += 1
 
-    # 2. директории
+    # 2. директории — ключевые жёстко, остальные мягко
     _KEY_DIRS = {"kb", "data", "docs"}
     for d in claims["dirs"]:
         if d.lower() in {"current", "the", "a", "in"}:
@@ -117,6 +120,7 @@ def verify_claims(workspace: str | Path, instruction: str,
             violations.append(f"dir_missing:{d}")
             if d.lower() in _KEY_DIRS:
                 hard_violated += 1
+            # неключевая директория — мягкое нарушение (просто в violations)
         elif not any(dd.iterdir()):
             violations.append(f"dir_empty:{d}")
             hard_violated += 1
@@ -156,7 +160,6 @@ def verify_claims(workspace: str | Path, instruction: str,
     if hard_violated > 0:
         feasibility = "unlikely"
     elif checked == 0:
-        # нечего проверять: math/reasoning без workspace — не ловушка
         feasibility = "likely" if not has_workspace else "uncertain"
     elif violations:
         feasibility = "uncertain"
