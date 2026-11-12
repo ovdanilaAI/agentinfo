@@ -9,8 +9,8 @@ import yaml
 @dataclass
 class Config:
     # курс и бюджет
-    input_to_output_ratio: float = 10
-    budget_output_equiv: int = 100_000
+    input_to_output_ratio: float = 9.5
+    budget_output_equiv: int = 80_000
 
     # агентный фреймворк
     c_sys_in: int = 1000
@@ -18,7 +18,7 @@ class Config:
     avg_tool_call_tokens: int = 60
     reasoning_tokens_per_step: int = 350
     avg_tool_output_tokens_cap: int = 2000
-    files_per_grep: int = 5
+    files_per_grep: int = 20
 
     # время
     latency_per_step_sec: float = 3.0
@@ -26,17 +26,18 @@ class Config:
     fixed_overhead_sec: float = 5.0
 
     # safety margin
-    safety_margin_output: float = 1.3
-    safety_margin_seconds: float = 1.5
+    safety_margin_output: float = 1.15
+    safety_margin_seconds: float = 1.3
 
     # p_solved priors
-    p_solved_likely: float = 0.85
-    p_solved_uncertain: float = 0.75
-    p_solved_unlikely: float = 0.05
+    p_solved_likely: float = 0.90
+    p_solved_uncertain: float = 0.80
+    p_solved_unlikely: float = 0.15
 
     # рюкзак
     knapsack_algorithm: str = "dp_exact"
     knapsack_budget_scale: int = 1
+    use_noreason_cost_when_possible: bool = True
 
     # планировщик
     n_agents: int = 5
@@ -48,7 +49,6 @@ class Config:
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
-    """Читает YAML и возвращает Config. Отсутствующие поля — дефолты."""
     p = Path(path)
     if not p.exists():
         return Config()
