@@ -1,36 +1,46 @@
 """
-Сборка финального JSON и (опционально) CSV для коллеги.
+Сборка финального JSON и CSV. Использует effective_weight для рюкзака.
 """
 import json
 from pathlib import Path
 import pandas as pd
 
 
+def _p_solved(feasibility: str, cfg) -> float:
+    if feasibility == "likely":
+        return cfg.p_solved_likely
+    if feasibility == "uncertain":
+        return cfg.p_solved_uncertain
+    return cfg.p_solved_unlikely
+
+
+def _effective_weight(idx, est, strat, cfg) -> int:
+    needs_reasoning = bool(strat.loc[idx, "needs_reasoning"])
+    if cfg.use_noreason_cost_when_possible and not needs_reasoning:
+        return int(est.loc[idx, "cost_noreason_safe"])
+    return int(est.loc[idx, "cost_reason_safe"])
+
+
 def build_output(df, feats, est, strat, feasibility, knapsack_res,
                  schedule_res, cfg, out_path: str | Path) -> dict:
     out_path = Path(out_path)
-
-    # --- tasks ---
-    tasks_out = []
     selected_set = set(knapsack_res["selected"])
-    # карта task_id -> agent
+
     agent_of = {}
     for plan in schedule_res["per_agent_plan"]:
         for tid in plan["tasks"]:
             agent_of[tid] = plan["agent"]
 
+    tasks_out = []
     for idx in df.index:
         row = df.loc[idx].to_dict()
         e = est.loc[idx].to_dict()
         s = strat.loc[idx].to_dict()
         fz = feasibility.loc[idx].to_dict()
 
-        p_solved = (cfg.p_solved_likely if fz["feasibility"] == "likely"
-                    else cfg.p_solved_uncertain if fz["feasibility"] == "uncertain"
-                    else cfg.p_solved_unlikely)
-
-        cost = e["cost_reason_safe"]
-        density = (row.get("reward", 0) * p_solved / cost) if cost > 0 else 0.0
+        p_solved = _p_solved(fz["feasibility"], cfg)
+        eff_weight = _effective_weight(idx, est, strat, cfg)
+        density = (row.get("reward", 0) * p_solved / eff_weight) if eff_weight > 0 else 0.0
 
         tasks_out.append({
             "task_id": row.get("task_id"),
@@ -44,7 +54,9 @@ def build_output(df, feats, est, strat, feasibility, knapsack_res,
             "n_iter_estimate": e["n_iter_estimate"],
             "cost_noreason": e["cost_noreason"],
             "cost_reason": e["cost_reason"],
+            "cost_noreason_safe": e["cost_noreason_safe"],
             "cost_reason_safe": e["cost_reason_safe"],
+            "effective_cost_for_knapsack": eff_weight,
             "seconds_noreason": e["seconds_noreason"],
             "seconds_reason": e["seconds_reason"],
             "seconds_reason_safe": e["seconds_reason_safe"],
@@ -56,7 +68,7 @@ def build_output(df, feats, est, strat, feasibility, knapsack_res,
             "agent": agent_of.get(row.get("task_id")),
         })
 
-    # --- knapsack summary ---
+    n_unfeasible = int((feasibility["feasibility"] == "unlikely").sum())
     knapsack_out = {
         "algorithm": cfg.knapsack_algorithm,
         "budget_output_equiv": cfg.budget_output_equiv,
@@ -65,17 +77,13 @@ def build_output(df, feats, est, strat, feasibility, knapsack_res,
         "total_reward_expected": round(knapsack_res["total_value"], 2),
         "n_total": len(df),
         "n_selected": len(knapsack_res["selected"]),
-        "n_skipped_unfeasible": int((feasibility["feasibility"] == "unlikely").sum()),
-        "n_skipped_budget": max(
-            0,
-            len(df) - len(knapsack_res["selected"])
-                    - int((feasibility["feasibility"] == "unlikely").sum())
-        ),
+        "n_skipped_unfeasible": n_unfeasible,
+        "n_skipped_budget": max(0, len(df) - len(knapsack_res["selected"]) - n_unfeasible),
     }
 
     result = {
         "meta": {
-            "estimator": "deterministic_formula_v1",
+            "estimator": "deterministic_formula_v1_soft",
             "calibrated": False,
             "constants": {
                 "input_to_output_ratio": cfg.input_to_output_ratio,
@@ -86,8 +94,12 @@ def build_output(df, feats, est, strat, feasibility, knapsack_res,
                 "latency_per_step_sec": cfg.latency_per_step_sec,
                 "safety_margin_output": cfg.safety_margin_output,
                 "safety_margin_seconds": cfg.safety_margin_seconds,
+                "p_solved_likely": cfg.p_solved_likely,
+                "p_solved_uncertain": cfg.p_solved_uncertain,
+                "p_solved_unlikely": cfg.p_solved_unlikely,
+                "use_noreason_cost_when_possible": cfg.use_noreason_cost_when_possible,
             },
-            "note": "constants are defaults; recalibrate online after first 10-20 runs",
+            "note": "soft knapsack: unlikely included with low p_solved; noreason cost used when possible",
         },
         "tasks": tasks_out,
         "knapsack": knapsack_out,
@@ -98,16 +110,13 @@ def build_output(df, feats, est, strat, feasibility, knapsack_res,
         },
     }
 
-    # --- запись ---
     out_json = out_path / "kpi_result.json"
     out_json.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str),
                         encoding="utf-8")
     print(f"[output] JSON → {out_json}")
 
     if cfg.output_csv:
-        csv_df = pd.DataFrame(tasks_out)
-        csv_path = out_path / "kpi.csv"
-        csv_df.to_csv(csv_path, index=False)
-        print(f"[output] CSV  → {csv_path}")
+        pd.DataFrame(tasks_out).to_csv(out_path / "kpi.csv", index=False)
+        print(f"[output] CSV  → {out_path / 'kpi.csv'}")
 
     return result
