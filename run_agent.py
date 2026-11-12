@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import re
-import csv
+import argparse
 from dotenv import load_dotenv, find_dotenv
 from openai import AsyncOpenAI
 from openjiuwen.core.runner import Runner
@@ -10,6 +10,7 @@ from openjiuwen.core.runner import Runner
 load_dotenv(find_dotenv())
 
 api_key = (
+    os.getenv("LLM_API_KEY") or
     os.getenv("OPENAI_API_KEY") or 
     os.getenv("API_KEY") or 
     os.getenv("NEURALDEEP_API_KEY") or
@@ -17,6 +18,7 @@ api_key = (
 )
 
 api_base = (
+    os.getenv("LLM_BASE_URL") or
     os.getenv("OPENAI_API_BASE") or 
     os.getenv("OPENAI_BASE_URL") or 
     "https://api.neuraldeep.ru/v1"
@@ -31,9 +33,9 @@ api_semaphore = asyncio.Semaphore(3)
 execution_results = []
 results_lock = asyncio.Lock()
 
-def get_task_directory(task_id: str) -> str:
+def get_task_directory(tasks_base_dir: str, task_id: str) -> str:
     """Гарантированное создание и поиск уникальной подпапки для каждой задачи."""
-    direct_path = os.path.join("task-dir", task_id)
+    direct_path = os.path.join(tasks_base_dir, task_id)
     os.makedirs(direct_path, exist_ok=True)
     return direct_path
 
@@ -132,7 +134,7 @@ def extract_pure_answer(full_text: str, task_id: str) -> str:
     """
     Чистое детерминированное извлечение ответа из *****answer*****:
     1. Находит контент между *****answer***** маркерами.
-    2. Очищает от случайно выведенных XML тегов (<exact_answer> и т.д.).
+    2. Очищает от случайно выведенных XML тегов.
     3. Вырезает рабочий Python-код для coding или первую валидную строку для остального.
     """
     raw_text = full_text.strip()
@@ -150,8 +152,11 @@ def extract_pure_answer(full_text: str, task_id: str) -> str:
         else:
             extracted = raw_text
 
-    # Удаляем сорность XML тегов, если модель их вывела
     extracted = re.sub(r'</?exact_answer>', '', extracted).strip()
+
+    # Если модель определила задачу как невыполнимую
+    if "UNFEASIBLE" in extracted.upper() or "IMPOSSIBLE" in extracted.upper():
+        return "UNFEASIBLE"
 
     # Специальная обработка для задач кодинга: вырезаем чистый python-код
     if "coding" in task_id:
@@ -164,7 +169,6 @@ def extract_pure_answer(full_text: str, task_id: str) -> str:
     # Для math, search, data_analysis — ищем первую чистую непустую строку
     lines = [l.strip() for l in extracted.splitlines() if l.strip()]
     
-    # Отбрасываем заголовочный мусор и технические теги
     filtered_lines = []
     for line in lines:
         cleaned_line = line.strip("`*# ")
@@ -177,7 +181,7 @@ def extract_pure_answer(full_text: str, task_id: str) -> str:
 
     return extracted.strip("`*# ")
 
-async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta: dict):
+async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta: dict, tasks_base_dir: str):
     """Выполнение задач с адаптированными системными промптами."""
     print(f"🤖 Agent [{agent_id}] started. Queue size: {len(assigned_task_ids)}")
     
@@ -185,7 +189,7 @@ async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta
         task_info = tasks_meta.get(task_id, {})
         model = task_info.get("recommended_model", "qwen3.6-35b-a3b-noreason")
         
-        task_dir = get_task_directory(task_id)
+        task_dir = get_task_directory(tasks_base_dir, task_id)
         instruction = find_task_instruction(task_dir, task_id)
         files_context = smart_load_context(task_dir, task_id, instruction)
         
@@ -222,7 +226,7 @@ async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta
         else:
             system_content = (
                 "You are an autonomous AI expert.\n"
-                "CRITICAL REQUIREMENT: Output ONLY the raw final value (number, name, or city) inside the answer markers without XML tags:\n"
+                "CRITICAL REQUIREMENT: Output ONLY the raw final value (number, name, or city) inside the answer markers without XML tags. If the task is unfeasible, output UNFEASIBLE:\n"
                 "*****answer*****\n"
                 "value\n"
                 "*****answer*****"
@@ -258,22 +262,24 @@ async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta
             print(f"\n\n" + "-"*60)
             
             clean_answer = extract_pure_answer(full_response_text, task_id)
-
             answer_path = os.path.join(task_dir, "answer.txt")
-            with open(answer_path, "w", encoding="utf-8") as f:
-                f.write(clean_answer)
+
+            # ВАЖНО: Если задача невыполнима (UNFEASIBLE), файл answer.txt НЕ создается по правилам организаторов!
+            if clean_answer == "UNFEASIBLE":
+                if os.path.exists(answer_path):
+                    os.remove(answer_path)
+                print(f"  ⚠️ [Agent {agent_id}] Task {task_id} is UNFEASIBLE. Skipping answer.txt creation.")
+            else:
+                with open(answer_path, "w", encoding="utf-8") as f:
+                    f.write(clean_answer)
+                print(f"  ✅ [Agent {agent_id}] Task {task_id} done (~{tokens_used} tokens)")
                 
             success = True
-            print(f"  ✅ [Agent {agent_id}] Task {task_id} done (~{tokens_used} tokens)")
             
         except Exception as e:
             error_msg = str(e)
             success = False
             print(f"  ❌ [Agent {agent_id}] Error: {error_msg}")
-            
-            answer_path = os.path.join(task_dir, "answer.txt")
-            with open(answer_path, "w", encoding="utf-8") as f:
-                f.write(f"Error: {error_msg}")
         
         async with results_lock:
             execution_results.append({
@@ -285,7 +291,31 @@ async def execute_agent_tasks(agent_id: int, assigned_task_ids: list, tasks_meta
             })
 
 async def main():
-    plan_file = "task-dir/kpi_result.json"
+    parser = argparse.ArgumentParser(description="Run autonomous code agent orchestrator.")
+    parser.add_argument("--tasks-dir", type=str, default="/data/tasks", help="Path to tasks directory")
+    args = parser.parse_args()
+    
+    tasks_base_dir = args.tasks_dir
+    budget_limit = int(os.getenv("BUDGET", "100000"))
+    
+    print(f"📂 Tasks directory: {tasks_base_dir}")
+    print(f"💰 Budget limit: {budget_limit}")
+
+    # Сначала запускаем препроцессор/планировщик для генерации kpi_result.json, если он еще не создан
+    main_py_path = "main.py"
+    if os.path.exists(main_py_path):
+        print("⚙️ Running preprocessor & knapsack planner...")
+        config_path = "config.yaml" if os.path.exists("config.yaml") else None
+        if config_path:
+            os.system(f"python main.py {tasks_base_dir} {config_path}")
+        else:
+            os.system(f"python main.py {tasks_base_dir}")
+
+    plan_file = os.path.join(tasks_base_dir, "kpi_result.json")
+    if not os.path.exists(plan_file):
+        # Проверим локальный путь, если task-dir относительный
+        plan_file = "task-dir/kpi_result.json"
+        
     if not os.path.exists(plan_file):
         print(f"❌ File {plan_file} not found!")
         return
@@ -296,12 +326,12 @@ async def main():
     schedule_plan = data.get("schedule_hint", {}).get("per_agent_plan", [])
     tasks_meta = {t["task_id"]: t for t in data.get("tasks", [])}
     
-    print(f"🚀 Starting Guaranteed Front-Marker Runner...")
+    print(f"🚀 Starting Guaranteed Front-Marker Runner with openJiuwen...")
     await Runner.start()
     
     try:
         agent_coroutines = [
-            execute_agent_tasks(agent_plan["agent"], agent_plan["tasks"], tasks_meta)
+            execute_agent_tasks(agent_plan["agent"], agent_plan["tasks"], tasks_meta, tasks_base_dir)
             for agent_plan in schedule_plan
         ]
         await asyncio.gather(*agent_coroutines)

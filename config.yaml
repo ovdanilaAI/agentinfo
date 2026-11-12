@@ -41,4 +41,4 @@ time_budget_sec: 3600
 
 # --- фичи ---
 max_claims_checked: 20
-output_csv: true
+output_csv: false
